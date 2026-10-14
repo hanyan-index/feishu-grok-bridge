@@ -47,8 +47,9 @@ module.exports = async function handler(req, res) {
     // 2.1 URL 验证（飞书配置回调时的验证请求）
     if (eventType === 'url_verification') {
       console.log('[Webhook] 处理 URL 验证');
+      const challenge = body.challenge || body.event?.challenge;
       return res.status(200).json({
-        challenge: body.challenge
+        challenge
       });
     }
 
