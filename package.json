@@ -1,0 +1,26 @@
+{
+  "name": "feishu-grok-bridge",
+  "version": "1.0.0",
+  "description": "飞书机器人接收消息 → 提取链接 → SMTP发送邮件到QQ邮箱 → 回复飞书确认",
+  "main": "api/webhook.js",
+  "scripts": {
+    "dev": "vercel dev",
+    "deploy": "vercel --prod"
+  },
+  "keywords": [
+    "feishu",
+    "lark",
+    "grok",
+    "vercel",
+    "serverless",
+    "webhook"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "nodemailer": "^6.9.14"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
