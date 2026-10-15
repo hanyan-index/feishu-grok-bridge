@@ -58,10 +58,9 @@
 1. 在左侧菜单中，点击 **"事件与回调"**
 2. 打开 **"启用事件"** 开关
 3. **请求地址**：先留空（部署到 Vercel 后再回来填写）
-4. **加密密钥**：
-   - 点击 **"重新生成"** 按钮
-   - 系统会生成一个 Encrypt Key
-   - **复制保存这个密钥**，后面会用到
+4. **加密策略**（建议开启）：
+   - **Encrypt Key**：点击 **"重新生成"**，复制保存。服务端会用它解密 `{"encrypt":"..."}` 请求，并校验 `X-Lark-Signature`
+   - **Verification Token**：同一页可以看到，复制到环境变量 `FEISHU_VERIFICATION_TOKEN`（可选，配置后会校验事件里的 token）
 5. **添加订阅事件**：
    - 点击 **"添加事件"**
    - 搜索并选择 `im.message.receive_v1`（接收消息事件）
@@ -127,7 +126,8 @@
 |--------|-----|------|
 | `FEISHU_APP_ID` | `cli_xxxxxxxxxxxxxxxx` | 飞书应用的 App ID |
 | `FEISHU_APP_SECRET` | `xxxxxxxxxxxxxxxx` | 飞书应用的 App Secret |
-| `FEISHU_ENCRYPT_KEY` | `xxxxxxxx` | 飞书事件订阅的加密密钥 |
+| `FEISHU_ENCRYPT_KEY` | `xxxxxxxx` | 飞书事件订阅的加密密钥。留空则不解密、不验签 |
+| `FEISHU_VERIFICATION_TOKEN` | `xxxxxxxx` | 飞书 Verification Token。留空则不校验 |
 | `SMTP_HOST` | `smtp.qq.com` | SMTP 服务器地址 |
 | `SMTP_PORT` | `587` | SMTP 端口 |
 | `SMTP_USER` | `your_qq@qq.com` | 发件人QQ邮箱 |
@@ -222,33 +222,146 @@
 
 ---
 
-## Part 5: 常见问题
+## Part 5: 本地测试
+
+飞书保存请求地址时，会立刻发一条 `url_verification`，并要求 **3 秒内** 返回 `{"challenge":"..."}`。可以先在自己电脑上把同一套代码跑起来，再用隧道给飞书一个临时公网地址。
+
+### 5.1 启动
+
+```bash
+cp .env.example .env
+npm install
+npm run dev
+```
+
+默认监听 `http://127.0.0.1:3000/api/webhook`。端口用环境变量 `PORT` 修改。
+
+做明文校验时，`.env` 里的 `FEISHU_ENCRYPT_KEY` 先留空。这个值一旦写上，所有请求都必须带正确签名。
+
+### 5.2 自己发一条 URL 校验
+
+```bash
+curl -s -X POST http://127.0.0.1:3000/api/webhook \
+  -H 'Content-Type: application/json' \
+  -d '{"type":"url_verification","challenge":"test-challenge"}'
+```
+
+正常会马上返回：
+
+```json
+{"challenge":"test-challenge"}
+```
+
+如果飞书后台已经生成了 Encrypt Key，真实的校验请求是加密的：外层只有 `{"encrypt":"..."}`，解密后才看得到 `challenge`。把同一个密钥写进 `FEISHU_ENCRYPT_KEY` 即可，本地服务和 Vercel 用的是同一段解密代码。
+
+### 5.3 用隧道接到飞书
+
+本机没有公网地址时，任选一个隧道，把 `3000` 端口暴露出去：
+
+```bash
+# Cloudflare
+cloudflared tunnel --url http://127.0.0.1:3000
+
+# ngrok
+ngrok http 3000
+
+# cpolar（国内网络常用）
+cpolar http 3000
+```
+
+飞书「请求地址」填隧道给的 HTTPS 地址，路径仍然是 `/api/webhook`，例如 `https://xxxx.trycloudflare.com/api/webhook`。
+
+---
+
+## Part 6: 长连接模式（不需要公网地址）
+
+飞书支持由你的程序主动连上去收事件（WebSocket）。这种方式没有请求地址，也不经过 `vercel.app`，大陆网络可以直接用。适合先在自己电脑上把收消息、发邮件跑通。进程关掉之后机器人就收不到消息，所以要一直开着，或者放到一台不关机的机器上。
+
+### 6.1 启动
+
+`.env` 里至少要有：
+
+- `FEISHU_APP_ID`
+- `FEISHU_APP_SECRET`
+- `SMTP_HOST` / `SMTP_PORT` / `SMTP_USER` / `SMTP_PASS`
+- `TO_EMAIL`
+
+然后：
+
+```bash
+npm install
+npm run dev:ws
+```
+
+看到正在连接即可。国际版 Lark（`open.larksuite.com`）把 `FEISHU_DOMAIN` 设为 `lark`。
+
+### 6.2 在飞书后台切换订阅方式
+
+1. 打开应用的 **「事件与回调」**
+2. 订阅方式选择 **「使用长连接接收事件」**（不要填请求网址）
+3. **先保持上面的进程在运行**，再点保存。飞书会通过这条已经建立的连接做校验，进程不在线会保存失败
+4. 添加事件 `im.message.receive_v1`
+5. 按 Part 1 把应用发到可用版本，并加进群
+
+长连接上的消息和 Webhook 走同一套提取链接、发邮件、回复飞书的逻辑。飞书若重推同一条消息，会按 `event_id` / `message_id` 丢掉重复邮件。
+
+---
+
+## Part 7: 绑定自定义域名（让大陆飞书访问 Vercel）
+
+`*.vercel.app` 从大陆访问经常很慢或根本连不上。函数以前默认跑在美国 `iad1`，再叠加冷启动，飞书 3 秒超时很容易出现。本仓库的 `vercel.json` 已把函数区域设为香港 `hkg1`。区域只能缩短 Vercel 这一侧的距离，**不能**解决 `vercel.app` 这个域名在大陆的连通性问题。给项目绑一个自己的域名，必要时再套一层 Cloudflare，飞书才稳。
+
+### 7.1 在 Vercel 添加域名
+
+1. 打开 Vercel 项目 → **Settings** → **Domains**
+2. 添加域名，例如 `bot.example.com`
+3. 按页面提示增加一条 CNAME，目标一般是 `cname.vercel-dns.com`
+
+### 7.2 用 Cloudflare 代理（大陆更稳）
+
+1. 把域名的 DNS 接到 [Cloudflare](https://dash.cloudflare.com/)
+2. 添加 CNAME：名称 `bot`，目标 `cname.vercel-dns.com`
+3. 代理状态选 **已代理**（橙色云朵），不要选「仅 DNS」
+4. SSL/TLS 模式设为 **Full (strict)**
+5. 等证书生效后，在飞书请求地址填写 `https://bot.example.com/api/webhook`
+
+这样飞书访问的是 Cloudflare，再由 Cloudflare 回源到香港的 Vercel 函数。
+
+冷启动时第一次请求仍可能偏慢。校验失败就再保存一次，热实例通常就过了。不想依赖公网回调时，用 Part 6 的长连接。
+
+---
+
+## Part 8: 常见问题
 
 ### Q1: 飞书回调验证失败怎么办？
 
-**错误表现**：保存请求地址时提示"请求地址校验失败"
+**错误表现**：保存请求地址时提示「请求3秒超时」或「请求地址校验失败」
+
+「请求3秒超时」表示飞书在 3 秒内没有拿到 `{"challenge":"..."}`。常见原因是 `*.vercel.app` 从大陆访问不通、函数在美国（`iad1`）再加上冷启动。本仓库已把区域改为香港 `hkg1`，并保证校验请求只做解密和验签、不发邮件。大陆环境仍建议按 Part 7 绑自定义域名，或按 Part 5 / Part 6 在本机测试。
 
 **排查步骤**：
 
-1. **检查域名拼写**
-   - 确认是 `https://` 开头，不是 `http://`
-   - 确认路径是 `/api/webhook`，不是 `/webhook`
+1. **检查地址**
+   - 确认是 `https://` 开头
+   - 路径是 `/api/webhook`，不是 `/webhook`
+   - 浏览器打开 `https://你的域名/api/webhook`，应返回 `{"ok":true,"service":"feishu-grok-bridge"}`
 
-2. **检查 Vercel 部署状态**
-   - 访问你的域名 `https://xxx.vercel.app`
-   - 如果显示 404，说明部署有问题
-   - 回到 Vercel 重新部署
+2. **Encrypt Key**
+   - 飞书后台如果生成了 Encrypt Key，请求体是 `{"encrypt":"..."}`，必须把同一个值配到 `FEISHU_ENCRYPT_KEY`
+   - 密钥为空时，飞书发的是明文，服务端不会尝试解密
+   - 配了密钥却验签失败时，日志里会有「签名验证失败」。签名用的是原始报文，不能先转成对象再序列化
 
-3. **查看 Vercel 日志**
-   - 登录 Vercel，进入项目
-   - 点击顶部 **"Deployments"**
-   - 点击最新的部署
-   - 点击 **"Functions"** → **"api/webhook"**
-   - 查看日志是否有错误
+3. **Verification Token**
+   - 只有配置了 `FEISHU_VERIFICATION_TOKEN` 才会校验
+   - 值必须和飞书后台完全一致，多一个空格也会 403
 
-4. **检查环境变量**
-   - 确认 `FEISHU_APP_ID` 和 `FEISHU_APP_SECRET` 已配置
-   - 确认没有多余的空格
+4. **查看 Vercel 日志**
+   - 项目 → **Deployments** → 最新部署 → **Functions** → `api/webhook`
+   - 成功的校验日志是「URL 验证已应答」
+
+5. **仍然超时**
+   - 再点一次保存（避开冷启动）
+   - 换成自定义域名，或改用长连接（Part 6）
 
 ### Q2: 邮件发送失败怎么排查？
 
@@ -319,8 +432,8 @@ vercel logs --json
 
 ### Q5: 修改配置后需要重新部署吗？
 
-- **修改环境变量**：不需要重新部署，Vercel 会自动更新
-- **修改代码**：需要重新部署（Git 推送后会自动部署）
+- **修改环境变量**：在 Vercel 保存后需要重新部署一次才会进到函数里
+- **修改代码**：推送到 Git 后会自动部署
 
 ### Q6: 如何更新代码？
 
@@ -346,22 +459,34 @@ vercel logs --json
 ```
 feishu-grok-bridge/
 ├── api/
-│   ├── webhook.js          # 主入口：接收飞书消息推送
-│   ├── lib/
-│   │   ├── lark.js         # 飞书相关：验签、发送回复消息
-│   │   ├── mailer.js       # 邮件发送：nodemailer SMTP
-│   │   └── extractor.js    # 链接提取：从文本中提取URL
-├── package.json            # 项目配置和依赖
-├── vercel.json             # Vercel 部署配置
-├── .env.example            # 环境变量示例
-└── README.md               # 本文件
+│   └── webhook.js          # Vercel 入口（Web Request）
+├── lib/
+│   ├── dispatch.js         # 解密、验签、立刻应答
+│   ├── accept.js           # 按 event_id / message_id 去重并后台执行
+│   ├── process-message.js  # 提取链接、发邮件、回复飞书
+│   ├── lark.js             # 解密、验签、发送回复
+│   ├── mailer.js           # nodemailer SMTP
+│   ├── extractor.js        # 从文本中提取 URL
+│   ├── dedupe.js           # 进程内去重
+│   └── background.js       # Vercel waitUntil
+├── scripts/
+│   ├── dev-server.js       # npm run dev，本地 HTTP
+│   ├── ws-client.js        # npm run dev:ws，长连接
+│   └── load-env.js         # 读取 .env
+├── test/webhook.test.js    # 明文 / 加密 URL 校验等
+├── package.json
+├── vercel.json             # 区域 hkg1
+├── .env.example
+└── README.md
 ```
 
 ## 技术栈
 
-- **Runtime**: Node.js 18+（Vercel Serverless Function）
+- **Runtime**: Node.js 20+（Vercel Functions，区域 `hkg1`）
+- **飞书**: 事件解密与验签；长连接使用 `@larksuiteoapi/node-sdk` 的 `WSClient`
+- **后台任务**: `@vercel/functions` 的 `waitUntil`（先返回 200，再发邮件和回复）
+- **去重**: 按 `event_id` / `message_id` 记在进程内存里。本地服务和长连接可以稳定挡住飞书重试；Vercel 上只有落到同一个实例的重试会被丢掉
 - **邮件**: nodemailer（SMTP）
-- **HTTP**: Node.js 原生 fetch
 - **部署**: Vercel
 
 ## 安全提示
@@ -379,6 +504,15 @@ feishu-grok-bridge/
    - 不要在公开群聊中使用（除非你愿意让所有人使用）
 
 ## 更新日志
+
+### v1.1.0
+- 支持 Encrypt Key：AES-256-CBC 解密后再处理，包含 `url_verification`
+- 可选校验 Verification Token
+- 签名使用 HTTP 原始报文，而不是 `JSON.stringify(req.body)`
+- 事件先返回 200，再用 `waitUntil` 发邮件和回复飞书
+- 按 `event_id` / `message_id` 丢掉飞书重试，避免重复发信
+- 函数区域改为香港 `hkg1`
+- 增加 `npm run dev` 本地服务和 `npm run dev:ws` 长连接
 
 ### v1.0.0
 - 初始版本
