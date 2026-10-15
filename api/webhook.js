@@ -26,6 +26,14 @@ module.exports = async function handler(req, res) {
 
     console.log(`[Webhook] 请求体: ${rawBody.substring(0, 500)}`);
 
+    // 0. URL 验证优先处理（飞书配置回调时的验证请求，跳过验签）
+    const eventType = body.header?.event_type || body.type;
+    if (eventType === 'url_verification') {
+      const challenge = body.challenge || body.event?.challenge;
+      console.log('[Webhook] 处理 URL 验证, challenge:', challenge);
+      return res.status(200).json({ challenge });
+    }
+
     // 1. 验签
     const encryptKey = process.env.FEISHU_ENCRYPT_KEY || '';
     const timestamp = req.headers['x-lark-request-timestamp'] || '';
@@ -41,19 +49,9 @@ module.exports = async function handler(req, res) {
     }
 
     // 2. 处理事件类型
-    const eventType = body.header?.event_type || body.type;
     console.log(`[Webhook] 事件类型: ${eventType}`);
 
-    // 2.1 URL 验证（飞书配置回调时的验证请求）
-    if (eventType === 'url_verification') {
-      console.log('[Webhook] 处理 URL 验证');
-      const challenge = body.challenge || body.event?.challenge;
-      return res.status(200).json({
-        challenge
-      });
-    }
-
-    // 2.2 消息接收事件
+    // 2.1 消息接收事件
     if (eventType === 'im.message.receive_v1') {
       return await handleMessageEvent(body, res);
     }
