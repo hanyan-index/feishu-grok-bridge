@@ -253,6 +253,36 @@ describe('feishu webhook', { concurrency: 1 }, () => {
     assert.ok(sent.includes('https://mp.weixin.qq.com/s/abc'));
   });
 
+  test('one iesdouyin share link sends one email', async () => {
+    process.env.TO_EMAIL = 'inbox@example.com';
+    const sent = [];
+    mailer.sendLinkEmail = async (_to, url) => {
+      sent.push(url);
+      return { messageId: 'mail-ies' };
+    };
+
+    const share = 'https://www.iesdouyin.com/share/video/7696944600073768230/?region=CN&mid=1';
+    const raw = JSON.stringify({
+      schema: '2.0',
+      header: { event_id: 'evt-ies', event_type: 'im.message.receive_v1', token: '' },
+      event: {
+        sender: { sender_id: { open_id: 'ou_1' } },
+        message: {
+          message_id: 'om_ies',
+          chat_id: 'oc_1',
+          message_type: 'text',
+          content: JSON.stringify({ text: `复制打开抖音 ${share}` })
+        }
+      }
+    });
+
+    const result = await post(port, raw);
+    assert.equal(result.status, 200);
+    await waitFor(() => sent.length === 1);
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    assert.deepEqual(sent, [share]);
+  });
+
   test('long-connection dispatcher accepts a message without blocking on email', async () => {
     let calls = 0;
     messages.processMessageEvent = async () => {
