@@ -1,5 +1,6 @@
 {
   "version": 2,
+  "regions": ["hkg1"],
   "routes": [
     {
       "src": "/api/(.*)",
@@ -7,8 +8,9 @@
     }
   ],
   "functions": {
-    "api/**/*.js": {
-      "maxDuration": 30
+    "api/webhook.js": {
+      "maxDuration": 30,
+      "regions": ["hkg1"]
     }
   }
 }
