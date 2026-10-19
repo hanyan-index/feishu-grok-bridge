@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const crypto = require('crypto');
 const { AESCipher } = require('@larksuiteoapi/node-sdk');
 
-const { createServer } = require('../scripts/dev-server');
+const { createServer } = require('../scripts/server');
 const { createMessageDispatcher } = require('../scripts/ws-client');
 const { decryptEvent } = require('../lib/lark');
 const { clearDedupe } = require('../lib/dedupe');

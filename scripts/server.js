@@ -1,14 +1,13 @@
 /**
- * 本地 HTTP 入口。把同一套 webhook 处理函数跑在本机，再用隧道暴露给飞书。
+ * 常驻 HTTP 入口。飞书把事件推到 /api/webhook。
+ * 校验请求在本进程里直接应答；消息事件先回 200，再后台发信和回复。
  *
- *   npm run dev
- *   curl -X POST http://127.0.0.1:3000/api/webhook -H 'content-type: application/json' \
- *     -d '{"type":"url_verification","challenge":"demo"}'
+ *   npm start
  */
 
 const http = require('http');
 const { loadEnv } = require('./load-env');
-const { fetch: handleRequest } = require('../api/webhook');
+const { handleRequest } = require('../lib/dispatch');
 
 const HOP_BY_HOP = new Set([
   'connection',
@@ -51,7 +50,7 @@ function createServer() {
       res.writeHead(response.status, outHeaders);
       res.end(out);
     } catch (error) {
-      console.error('[Dev] 请求处理失败:', error);
+      console.error('[Server] 请求处理失败:', error);
       if (!res.headersSent) {
         res.writeHead(500, { 'content-type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({ error: 'Internal Server Error' }));
@@ -62,10 +61,9 @@ function createServer() {
 
 function listen(server) {
   const port = Number(process.env.PORT || 3000);
-  const host = process.env.HOST || '0.0.0.0';
+  const host = process.env.HOST || '127.0.0.1';
   server.listen(port, host, () => {
-    console.log(`[Dev] 本地服务已启动: http://127.0.0.1:${port}/api/webhook`);
-    console.log('[Dev] 用 cloudflared / ngrok / cpolar 把这个地址暴露给飞书做 URL 校验');
+    console.log(`[Server] 正在监听 http://${host}:${port}/api/webhook`);
   });
 }
 
